@@ -1,0 +1,34 @@
+
+services:
+  # 1. The Database Service
+  db:
+    image: postgres:15
+    container_name: cxr_postgres
+    restart: always
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data  # Saves your DB data so it isn't lost on restart
+      
+  # 2. The FastAPI Service
+  api:
+    build: .  # This tells Docker to build the image using your local Dockerfile!
+    container_name: cxr_api
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db  # This ensures the database starts BEFORE the API
+    volumes:
+      - ./images:/app/images  # Syncs the saved images to your Linux folder
+      - ./app:/app/app 
+volumes:
+  pg_data:  # Defines the volume for the database

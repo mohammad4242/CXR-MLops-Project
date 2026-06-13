@@ -10,3 +10,6 @@ scikit-image
 fastapi
 uvicorn
 python-multipart
+dotenv
+sqlalchemy
+psycopg[binary]
