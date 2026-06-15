@@ -1,9 +1,9 @@
 import io
 import sys
-import types
 import importlib
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from types import ModuleType
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -47,39 +47,54 @@ class FakeDB:
         self.rolled_back = True
 
 
-def load_main_with_mocks(monkeypatch, tmp_path=None):
-    fake_database = types.ModuleType("database")
+def load_main_with_mocks(tmp_path=None):
+    fake_database = ModuleType("database")
     fake_database.engine = MagicMock()
     fake_database.get_db = lambda: iter([])
     fake_database.Base = MagicMock()
     fake_database.Base.metadata = MagicMock()
     fake_database.Base.metadata.create_all = MagicMock()
 
-    fake_models = types.ModuleType("models")
+    fake_models = ModuleType("models")
     fake_models.PredictionRecord = FakeRecord
 
-    fake_inference = types.ModuleType("inference")
+    fake_inference = ModuleType("inference")
     fake_inference.CXRPredictor = MagicMock(return_value=DummyPredictor())
 
-    monkeypatch.setitem(sys.modules, "database", fake_database)
-    monkeypatch.setitem(sys.modules, "models", fake_models)
-    monkeypatch.setitem(sys.modules, "inference", fake_inference)
+    fake_torch = MagicMock()
+    fake_torchvision = MagicMock()
+    fake_torchvision_transforms = MagicMock()
+    fake_torchxrayvision = MagicMock()
+    fake_skimage = MagicMock()
+    fake_skimage_io = MagicMock()
 
-    if "main" in sys.modules:
-        del sys.modules["main"]
+    mocked_modules = {
+        "database": fake_database,
+        "models": fake_models,
+        "inference": fake_inference,
+        "torch": fake_torch,
+        "torchvision": fake_torchvision,
+        "torchvision.transforms": fake_torchvision_transforms,
+        "torchxrayvision": fake_torchxrayvision,
+        "skimage": fake_skimage,
+        "skimage.io": fake_skimage_io,
+    }
 
-    main = importlib.import_module("main")
+    with patch.dict(sys.modules, mocked_modules):
+        if "main" in sys.modules:
+            del sys.modules["main"]
+        main = importlib.import_module("main")
 
     if tmp_path is not None:
-        monkeypatch.setattr(main, "IMAGES_DIR", tmp_path)
+        main.IMAGES_DIR = tmp_path
 
     return main
 
 
-def test_health_endpoint(monkeypatch):
-    main = load_main_with_mocks(monkeypatch)
-    monkeypatch.setitem(main.ml_models, "predictor", DummyPredictor())
-    monkeypatch.setitem(main.app_state, "startup_time", main.time.time() - 10)
+def test_health_endpoint():
+    main = load_main_with_mocks()
+    main.ml_models["predictor"] = DummyPredictor()
+    main.app_state["startup_time"] = main.time.time() - 10
 
     with TestClient(main.app) as client:
         response = client.get("/health")
@@ -91,11 +106,11 @@ def test_health_endpoint(monkeypatch):
     assert data["model_name"] == "densenet121-res224-all"
 
 
-def test_predict_success(monkeypatch, tmp_path):
-    main = load_main_with_mocks(monkeypatch, tmp_path=tmp_path)
+def test_predict_success(tmp_path):
+    main = load_main_with_mocks(tmp_path=tmp_path)
     fake_db = FakeDB()
 
-    monkeypatch.setitem(main.ml_models, "predictor", DummyPredictor())
+    main.ml_models["predictor"] = DummyPredictor()
     main.app.dependency_overrides[main.get_db] = lambda: iter([fake_db])
 
     file_content = b"fake image bytes"
@@ -121,11 +136,11 @@ def test_predict_success(monkeypatch, tmp_path):
     assert saved_file.read_bytes() == file_content
 
 
-def test_predict_rejects_non_image(monkeypatch):
-    main = load_main_with_mocks(monkeypatch)
+def test_predict_rejects_non_image():
+    main = load_main_with_mocks()
     fake_db = FakeDB()
 
-    monkeypatch.setitem(main.ml_models, "predictor", DummyPredictor())
+    main.ml_models["predictor"] = DummyPredictor()
     main.app.dependency_overrides[main.get_db] = lambda: iter([fake_db])
 
     with TestClient(main.app) as client:
