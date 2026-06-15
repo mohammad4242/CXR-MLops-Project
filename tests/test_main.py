@@ -2,7 +2,7 @@ import io
 from fastapi.testclient import TestClient
 
 import main
-from conftest import DummyPredictor, FakeDB
+from helper import DummyPredictor, FakeDB
 
 
 def test_health_endpoint():
