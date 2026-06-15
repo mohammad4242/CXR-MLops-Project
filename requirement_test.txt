@@ -3,6 +3,6 @@ uvicorn
 python-multipart
 dotenv
 sqlalchemy
-psycopg[binary]%                                                                            
+psycopg[binary]                                                                            
 pytest
 httpx
