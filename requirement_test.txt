@@ -1,8 +1,24 @@
-fastapi
-uvicorn
-python-multipart
-dotenv
-sqlalchemy
-psycopg[binary]                                                                            
+# ---- Test runner ----
 pytest
+pytest-asyncio
+
+# ---- HTTP testing ----
 httpx
+fastapi[standard]
+
+# ---- API & DB ----
+fastapi
+sqlalchemy
+python-dotenv
+python-multipart
+psycopg[binary]
+
+# ---- ML (CPU-only, lighter) ----
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+torchvision
+scikit-image
+torchxrayvision
+
+# ---- Mocking ----
+pytest-mock
