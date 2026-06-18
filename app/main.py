@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 # 1. NEW IMPORTS: We need Depends for dependency injection and Session for DB typing
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from sqlalchemy.orm import Session
+from fastapi.middleware.cors import CORSMiddleware
 
 # 2. NEW IMPORTS: Import our database engine, session getter, and the model
 from app.models import PredictionRecord
@@ -44,6 +45,19 @@ app = FastAPI(
     description="API for analyzing Chest X-Ray images using TorchXRayVision",
     version="1.0.0",
     lifespan=lifespan
+)
+origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://62.60.198.132:5173",
+]
+    
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 @app.get("/health")

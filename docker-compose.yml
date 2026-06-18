@@ -18,7 +18,8 @@ services:
       
   # 2. The FastAPI Service
   api:
-    image: mohammad4242/myapi #This tells Docker to build the image using your local Dockerfile!
+    image: mohammad4242/myapi:latest  # This tells Docker to build the image using your local Dockerfile!
+>>>>>>> 51a578a (feat: add middleware)
     container_name: cxr_api
     restart: always
     env_file:
