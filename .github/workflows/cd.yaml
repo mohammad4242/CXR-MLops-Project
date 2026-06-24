@@ -7,14 +7,28 @@ on:
       - completed
     branches:
       - main
+  workflow_dispatch: {}  # allow manual "Run workflow" / gh workflow run
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    # Run on a manual dispatch, or after a successful CI Pipeline run.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      # The VPS can't reliably clone from GitHub, but GitHub's runner CAN reach
+      # the VPS — so we copy the compose file and gateway config straight up.
+      # (.env is created/managed on the server and is never overwritten here.)
+      - name: Copy compose + gateway config to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "docker-compose.yml,nginx/default.conf"
+          target: "~/cxr-pred"
 
       - name: Deploy to Server
         uses: appleboy/ssh-action@v1.0.3
@@ -22,21 +36,9 @@ jobs:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script_stop: true  # fail the step on the first error (no silent "success")
           script: |
             cd ~/cxr-pred
-
-            # Sync the latest docker-compose.yml so the new "frontend" service is
-            # known to the server. Guarded: if this folder isn't a git checkout,
-            # we skip the pull and rely on the compose file already in place.
-            if [ -d .git ]; then
-              git pull origin main
-            fi
-
-            # Pull the freshly built images (api + frontend) and (re)start the
-            # whole stack. --remove-orphans cleans up any services that were
-            # renamed or removed from the compose file.
             docker compose pull
             docker compose up -d --remove-orphans
-
-            # Drop dangling images left behind by the new pulls.
             docker image prune -f
