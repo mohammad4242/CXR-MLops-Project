@@ -15,10 +15,15 @@ services:
       - "5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data  # Saves your DB data so it isn't lost on restart
-      
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   # 2. The FastAPI Service
   api:
-    image: mohammad4242/myapi:latest  # This tells Docker to build the image using your local Dockerfile!
+    image: mohammad4242/myapi:latest
     container_name: cxr_api
     restart: always
     env_file:
@@ -26,9 +31,9 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      - db  # This ensures the database starts BEFORE the API
+      db:
+        condition: service_healthy  # Wait until PostgreSQL is actually ready, not just started
     volumes:
       - ./images:/app/images  # Syncs the saved images to your Linux folder
-      - ./app:/app/app 
 volumes:
   pg_data:  # Defines the volume for the database

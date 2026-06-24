@@ -32,8 +32,10 @@ class CXRPredictor:
         img = xrv.datasets.normalize(img, 255)
         
         # 2. Convert to single channel (grayscale) if needed
+        # Use only RGB channels — slice [:3] drops the alpha channel in RGBA images
+        # before averaging, otherwise alpha=255 skews pixel intensities
         if len(img.shape) > 2:
-            img = img.mean(2)[None, ...]  # (1, H, W)
+            img = img[..., :3].mean(2)[None, ...]  # (1, H, W)
         else:
             img = img[None, ...]  # (1, H, W)
             

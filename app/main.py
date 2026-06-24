@@ -74,24 +74,25 @@ async def health_check():
 # 5. DEPENDENCY INJECTION: We added `db: Session = Depends(get_db)` to get the database session
 @app.post("/predict")
 async def predict(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    if not file.content_type.startswith("image/"):
+    if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image.")
-    
+
+    file_path = None
     try:
         # Read image bytes directly into memory
         image_bytes = await file.read()
-        
-        # 6. SAVE FILE: Generate a unique name and save the image to the Linux folder
         file_size_bytes = len(image_bytes)
+
+        # Run inference FIRST — only persist files that produce valid results
+        results = ml_models["predictor"].predict(image_bytes)
+
+        # 6. SAVE FILE: Generate a unique name and save the image to the Linux folder
         file_extension = Path(file.filename).suffix or ".png"
         stored_filename = f"{uuid4().hex}{file_extension}"
         file_path = IMAGES_DIR / stored_filename
-        
+
         with open(file_path, "wb") as image_file:
             image_file.write(image_bytes)
-            
-        # Run inference
-        results = ml_models["predictor"].predict(image_bytes)
         
         # Calculate the highest prediction score for the database
         max_prediction_score = max(results.values()) if results else None
@@ -123,6 +124,8 @@ async def predict(file: UploadFile = File(...), db: Session = Depends(get_db)):
         }
     
     except Exception as e:
-        # 9. ROLLBACK: If something crashes, undo the database transaction so we don't save bad data
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Inference failed: {str(e)}")
+        # Remove the saved file if DB commit failed, so we don't accumulate orphans
+        if file_path and file_path.exists():
+            file_path.unlink()
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
