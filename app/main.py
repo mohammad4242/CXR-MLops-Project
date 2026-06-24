@@ -1,41 +1,65 @@
-import os
 import time
 from pathlib import Path
 from uuid import uuid4
 from contextlib import asynccontextmanager
 
-# 1. NEW IMPORTS: We need Depends for dependency injection and Session for DB typing
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
 
-# 2. NEW IMPORTS: Import our database engine, session getter, and the model
-from app.models import PredictionRecord
+from app.models import PredictionRecord, User
 from app.database import engine, get_db, Base
 from app.inference import CXRPredictor
+from app.security import get_current_user
+from app.routers import auth as auth_router
 
 ml_models = {}
 app_state = {"startup_time": None}
 MODEL_NAME = "densenet121-res224-all"
 
-# 3. DIRECTORY SETUP: Create an 'images' folder if it doesn't exist
+# Only findings at or above this confidence are surfaced to the client. The full
+# prediction set is still stored in the database for audit/history.
+SIGNIFICANCE_THRESHOLD = 0.65
+NO_SIGNIFICANT_FINDINGS_MESSAGE = (
+    "No findings reached the 65% confidence threshold. The model did not identify a "
+    "high-probability abnormality in this radiograph. This result is not a diagnosis — "
+    "please consult a qualified clinician for interpretation."
+)
+
+# DIRECTORY SETUP: Create an 'images' folder if it doesn't exist
 IMAGES_DIR = Path("images")
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Initializing server...")
     app_state["startup_time"] = time.time()
-    
-    # 4. DATABASE CREATION: This line physically creates the table in PostgreSQL!
+
+    # DATABASE CREATION: create any missing tables (users, prediction_records).
     print("Creating database tables...")
     Base.metadata.create_all(bind=engine)
-    
+
+    # Idempotent migration: add user_id to databases that were created before
+    # authentication existed. PostgreSQL's "IF NOT EXISTS" makes this safe to run
+    # on every boot, and it is a best-effort step that never blocks startup.
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "ALTER TABLE prediction_records "
+                    "ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)"
+                )
+            )
+    except Exception as exc:  # noqa: BLE001
+        print(f"Skipping user_id migration: {exc}")
+
     ml_models["predictor"] = CXRPredictor()
     print("Model loaded successfully!")
-    
-    yield  
-    
+
+    yield
+
     print("Shutting down server and cleaning up resources...")
     ml_models.clear()
 
@@ -43,15 +67,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Chest X-Ray API",
     description="API for analyzing Chest X-Ray images using TorchXRayVision",
-    version="1.0.0",
-    lifespan=lifespan
+    version="1.1.0",
+    lifespan=lifespan,
 )
+
 origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://62.60.198.132:5173",
 ]
-    
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -59,6 +84,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Authentication routes: /auth/register, /auth/login, /auth/me
+app.include_router(auth_router.router)
+
 
 @app.get("/health")
 async def health_check():
@@ -68,12 +97,18 @@ async def health_check():
         "uptime_seconds": uptime_seconds,
         "model_loaded": "predictor" in ml_models,
         "model_name": MODEL_NAME,
-        "version": app.version
+        "version": app.version,
     }
 
-# 5. DEPENDENCY INJECTION: We added `db: Session = Depends(get_db)` to get the database session
+
+# DEPENDENCY INJECTION: `db` gives us a database session and `current_user`
+# enforces authentication — only signed-in users can run predictions.
 @app.post("/predict")
-async def predict(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def predict(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image.")
 
@@ -86,19 +121,20 @@ async def predict(file: UploadFile = File(...), db: Session = Depends(get_db)):
         # Run inference FIRST — only persist files that produce valid results
         results = ml_models["predictor"].predict(image_bytes)
 
-        # 6. SAVE FILE: Generate a unique name and save the image to the Linux folder
+        # SAVE FILE: Generate a unique name and save the image to the Linux folder
         file_extension = Path(file.filename).suffix or ".png"
         stored_filename = f"{uuid4().hex}{file_extension}"
         file_path = IMAGES_DIR / stored_filename
 
         with open(file_path, "wb") as image_file:
             image_file.write(image_bytes)
-        
+
         # Calculate the highest prediction score for the database
         max_prediction_score = max(results.values()) if results else None
-        
-        # 7. SAVE TO POSTGRESQL: Create a new PredictionRecord object
+
+        # SAVE TO POSTGRESQL: persist the full result set, linked to the user.
         record = PredictionRecord(
+            user_id=current_user.id,
             original_filename=file.filename,
             stored_filename=stored_filename,
             file_path=str(file_path),
@@ -109,20 +145,35 @@ async def predict(file: UploadFile = File(...), db: Session = Depends(get_db)):
             max_prediction_score=max_prediction_score,
             predictions=results,
         )
-        
-        # 8. COMMIT: Add the record to the session and save it to the database
+
         db.add(record)
         db.commit()
-        db.refresh(record) # This updates the 'record' variable with the new ID and created_at time
-        
+        db.refresh(record)  # Pull back the new ID and created_at
+
+        # Surface only findings at/above the confidence threshold, ranked high→low.
+        significant_findings = {
+            pathology: score
+            for pathology, score in sorted(
+                results.items(), key=lambda item: item[1], reverse=True
+            )
+            if score >= SIGNIFICANCE_THRESHOLD
+        }
+        has_findings = bool(significant_findings)
+
         return {
             "id": record.id,
             "filename": record.original_filename,
             "success": True,
-            "predictions": results,
-            "saved_at": record.created_at
+            "findings": significant_findings,
+            "has_findings": has_findings,
+            "message": None if has_findings else NO_SIGNIFICANT_FINDINGS_MESSAGE,
+            "threshold": SIGNIFICANCE_THRESHOLD,
+            "saved_at": record.created_at,
         }
-    
+
+    except HTTPException:
+        # Let intentional 4xx responses pass through untouched.
+        raise
     except Exception as e:
         db.rollback()
         # Remove the saved file if DB commit failed, so we don't accumulate orphans

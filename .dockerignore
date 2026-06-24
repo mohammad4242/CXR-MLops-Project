@@ -8,3 +8,12 @@ __pycache__
 *.pyo
 images/
 requirement_test.txt
+
+# The frontend and gateway config are not part of the API image
+frontend/
+nginx/
+node_modules/
+
+# Stray earlier frontend scaffolding (safe to delete from the repo entirely)
+0fe1de07a/
+b215a3fd.gz/

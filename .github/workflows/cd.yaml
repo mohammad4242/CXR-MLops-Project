@@ -24,6 +24,19 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             cd ~/cxr-pred
+
+            # Sync the latest docker-compose.yml so the new "frontend" service is
+            # known to the server. Guarded: if this folder isn't a git checkout,
+            # we skip the pull and rely on the compose file already in place.
+            if [ -d .git ]; then
+              git pull origin main
+            fi
+
+            # Pull the freshly built images (api + frontend) and (re)start the
+            # whole stack. --remove-orphans cleans up any services that were
+            # renamed or removed from the compose file.
             docker compose pull
-            docker compose up -d
+            docker compose up -d --remove-orphans
+
+            # Drop dangling images left behind by the new pulls.
             docker image prune -f

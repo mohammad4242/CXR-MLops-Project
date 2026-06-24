@@ -3,3 +3,10 @@ __pycache__/
 *.pyc
 .venv/
 images
+.env
+.mcp.json
+
+# Frontend (Node / Vite)
+node_modules/
+frontend/dist/
+*.local

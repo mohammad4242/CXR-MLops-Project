@@ -13,6 +13,11 @@ python-dotenv
 python-multipart
 psycopg[binary]
 
+# ---- Authentication ----
+bcrypt
+pyjwt
+email-validator
+
 # ---- ML (CPU-only, lighter) ----
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch

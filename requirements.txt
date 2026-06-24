@@ -13,3 +13,8 @@ python-multipart
 python-dotenv
 sqlalchemy
 psycopg[binary]
+
+# Authentication
+bcrypt
+pyjwt
+email-validator
